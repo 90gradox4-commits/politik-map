@@ -69,10 +69,12 @@ function getMapTilerKey(){return window.POLITIK_MAP_CONFIG?.maptilerKey||''}
 function mapTileLayer(style){
  const key=getMapTilerKey();
  if(!key||key==='PEGA_AQUI_TU_NUEVA_CLAVE_MAPTILER') return null;
- const mapId=style==='satellite'?'satellite-v4':'streets-v4';
- const ext=style==='satellite'?'jpg':'png';
- return L.tileLayer(`https://api.maptiler.com/maps/${mapId}/{z}/{x}/{y}.${ext}?key=${encodeURIComponent(key)}`,{
-   tileSize:512,zoomOffset:-1,minZoom:1,maxZoom:20,crossOrigin:true,
+ // Calles: Maps API. Satélite: Tiles API (satellite-v4 pertenece a /tiles/, no a /maps/).
+ const url = style==='satellite'
+   ? `https://api.maptiler.com/tiles/satellite-v4/{z}/{x}/{y}.jpg?key=${encodeURIComponent(key)}`
+   : `https://api.maptiler.com/maps/streets-v4/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`;
+ return L.tileLayer(url,{
+   minZoom:1,maxZoom:20,crossOrigin:true,
    attribution:'<a href="https://www.maptiler.com/copyright/" target="_blank">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>'
  });
 }

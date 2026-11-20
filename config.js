@@ -1,5 +1,6 @@
 // POLITIK MAP — configuración de MapTiler.
-// Esta clave se usa en el navegador. Restringe sus orígenes HTTP desde tu cuenta MapTiler.
+// Pega aquí la NUEVA clave que acabas de crear en MapTiler.
+// No uses la clave anterior que apareció en las capturas.
 window.POLITIK_MAP_CONFIG = {
-  maptilerKey: "GCwWqwwJBDp9bDent47b"
+  maptilerKey: "pv7j6LJm1y47sWIkQwJm"
 };
