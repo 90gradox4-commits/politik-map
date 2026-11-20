@@ -30,7 +30,7 @@
     <div class="sidebar-bottom">
       <div class="privacy-note"><i data-lucide="shield-check"></i><span>Datos personales protegidos. Comparte únicamente información autorizada.</span></div>
       <button class="nav-item" data-view="settings"><i data-lucide="settings"></i> Configuración</button>
-      <div class="profile"><div class="avatar">AD</div><div><strong>Administrador</strong><small>Cuenta local de demostración</small></div></div>
+      <div class="profile"><div class="avatar">AD</div><div><strong>Administrador</strong><small>Cuenta autenticada</small></div><button class="icon-btn" id="logoutBtn" title="Cerrar sesión"><i data-lucide="log-out"></i></button></div>
     </div>
   </aside>
 
@@ -136,13 +136,33 @@
     <form id="recordForm"><div id="formFields" class="form-grid"></div><div class="modal-footer"><button type="button" class="secondary-btn" id="cancelModal">Cancelar</button><button type="submit" class="primary-btn"><i data-lucide="save"></i> Guardar registro</button></div></form>
   </div>
 </div>
+
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <div class="auth-brand"><div class="auth-mark"><i data-lucide="map-pinned"></i></div><div><strong>POLITIK MAP</strong><small>INTELIGENCIA TERRITORIAL</small></div></div>
+    <p class="eyebrow">ESPACIO PRIVADO</p>
+    <h1>Iniciar sesión</h1>
+    <p class="auth-copy">Accede para consultar y sincronizar los registros de tu equipo.</p>
+    <form id="authForm" class="auth-form">
+      <label>Correo electrónico<input id="authEmail" type="email" autocomplete="username" required placeholder="nombre@correo.com"></label>
+      <label>Contraseña<input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="Mínimo 8 caracteres"></label>
+      <button class="primary-btn" type="submit" id="authLoginBtn">Iniciar sesión</button>
+    </form>
+    <button class="auth-secondary" id="authSignupBtn" type="button">Crear cuenta nueva</button>
+    <p class="auth-message" id="authMessage" role="status"></p>
+    <p class="auth-footnote">Los datos de cada cuenta se mantienen separados y protegidos mediante políticas RLS.</p>
+  </div>
+</div>
+
 <div class="toast" id="toast"><i data-lucide="check-circle-2"></i><span></span></div>
 <div class="detail-drawer" id="detailDrawer"><div class="drawer-head"><div><p class="eyebrow">DETALLE DEL REGISTRO</p><h2 id="detailTitle"></h2></div><button class="icon-btn" id="closeDrawer"><i data-lucide="x"></i></button></div><div id="detailContent"></div></div>
 <div class="drawer-scrim" id="drawerScrim"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
+<script src="supabase-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

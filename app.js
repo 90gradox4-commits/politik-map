@@ -30,6 +30,107 @@ function futureDate(days){const d=new Date();d.setDate(d.getDate()+days);return 
 function loadData(){try{const x=JSON.parse(localStorage.getItem('politikMapData'));return x||structuredClone(DEMO)}catch{return structuredClone(DEMO)}}
 let db=loadData(), maps={}, markers={}, baseLayers={}, activeMapStyle='streets';
 let currentType=null,currentId=null;
+
+// Supabase: la clave publicable es apta para el navegador; RLS limita cada cuenta a sus propios datos.
+const SUPABASE_URL = window.POLITIK_SUPABASE_CONFIG?.url || '';
+const SUPABASE_KEY = window.POLITIK_SUPABASE_CONFIG?.publishableKey || '';
+const cloud = (window.supabase && SUPABASE_URL && SUPABASE_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
+let currentUser = null;
+let realtimeChannel = null;
+let cloudReady = false;
+const CLOUD_TABLE = 'politik_map_records';
+const COLLECTION_TYPES = {leaders:'leader',officials:'official',places:'place',events:'event',results:'result'};
+const TYPE_COLLECTIONS = {leader:'leaders',official:'officials',place:'places',event:'events',result:'results'};
+function setAuthMessage(message,isError=false){const el=document.getElementById('authMessage');if(el){el.textContent=message;el.style.color=isError?'#c24141':'#3267e9'}}
+function setAuthBusy(busy){const b=document.getElementById('authLoginBtn');if(b){b.disabled=busy;b.textContent=busy?'Conectando…':'Iniciar sesión'}}
+function emptyDatabase(){return {leaders:[],officials:[],places:[],events:[],results:[]}}
+function localCustomRows(){
+ const local=loadData(), demoIds=new Set(Object.values(DEMO).flat().map(x=>String(x.id)));
+ const rows=[];
+ for(const [collection,type] of Object.entries(COLLECTION_TYPES)){
+  for(const item of (local[collection]||[])) if(!demoIds.has(String(item.id))) rows.push({record_type:type,record_id:String(item.id),payload:item});
+ }
+ return rows;
+}
+async function loadCloudData(showMessage=true){
+ if(!cloud||!currentUser)return;
+ const {data,error}=await cloud.from(CLOUD_TABLE).select('record_type,record_id,payload').eq('user_id',currentUser.id);
+ if(error){if(showMessage)toast('No se pudieron cargar los registros: '+error.message);return}
+ const next=emptyDatabase();
+ for(const row of (data||[])){
+  const collection=TYPE_COLLECTIONS[row.record_type];
+  if(collection&&row.payload)next[collection].push({...row.payload,id:row.record_id});
+ }
+ // Importa registros locales creados por el usuario, excluyendo los ejemplos ficticios.
+ if((data||[]).length===0){
+  const legacy=localCustomRows();
+  if(legacy.length){
+   const payload=legacy.map(r=>({...r,user_id:currentUser.id}));
+   const {error:importError}=await cloud.from(CLOUD_TABLE).upsert(payload,{onConflict:'user_id,record_type,record_id'});
+   if(importError){toast('No se pudieron importar los registros locales: '+importError.message);}
+   else for(const r of legacy){const col=TYPE_COLLECTIONS[r.record_type];next[col].push(r.payload)}
+  }
+ }
+ db=next;localStorage.setItem('politikMapData',JSON.stringify(db));cloudReady=true;renderAll();
+ if(showMessage)toast('Datos sincronizados con Supabase');
+}
+async function cloudUpsert(type,item){
+ if(!cloud||!currentUser||!cloudReady)return {error:new Error('Inicia sesión para guardar en la nube')};
+ const row={user_id:currentUser.id,record_type:type,record_id:String(item.id),payload:item,updated_at:new Date().toISOString()};
+ return await cloud.from(CLOUD_TABLE).upsert(row,{onConflict:'user_id,record_type,record_id'});
+}
+async function cloudDelete(type,id){
+ if(!cloud||!currentUser||!cloudReady)return {error:new Error('No hay una sesión activa')};
+ return await cloud.from(CLOUD_TABLE).delete().eq('user_id',currentUser.id).eq('record_type',type).eq('record_id',String(id));
+}
+async function startRealtime(){
+ if(!cloud||!currentUser)return;
+ if(realtimeChannel)await cloud.removeChannel(realtimeChannel);
+ realtimeChannel=cloud.channel('politik-map-sync-'+currentUser.id)
+  .on('postgres_changes',{event:'*',schema:'public',table:CLOUD_TABLE,filter:'user_id=eq.'+currentUser.id},()=>loadCloudData(false))
+  .subscribe();
+}
+async function activateSession(session){
+ if(!session?.user||!cloud)return;
+ if(currentUser?.id===session.user.id&&cloudReady)return;
+ currentUser=session.user;cloudReady=false;
+ document.getElementById('authGate')?.classList.add('hidden');
+ const profile=document.querySelector('.profile small');if(profile)profile.textContent=session.user.email||'Cuenta autenticada';
+ await loadCloudData(true);await startRealtime();
+}
+async function handleAuthSubmit(e){
+ e.preventDefault();if(!cloud){setAuthMessage('Falta configurar Supabase en supabase-config.js.',true);return}
+ const email=document.getElementById('authEmail').value.trim();const password=document.getElementById('authPassword').value;
+ setAuthBusy(true);setAuthMessage('Verificando credenciales…');
+ const {data,error}=await cloud.auth.signInWithPassword({email,password});
+ setAuthBusy(false);
+ if(error){setAuthMessage(error.message,true);return}
+ if(data.session)await activateSession(data.session);
+}
+async function handleSignup(){
+ if(!cloud){setAuthMessage('Falta configurar Supabase en supabase-config.js.',true);return}
+ const email=document.getElementById('authEmail').value.trim();const password=document.getElementById('authPassword').value;
+ if(!email||password.length<8){setAuthMessage('Escribe un correo válido y una contraseña de al menos 8 caracteres.',true);return}
+ setAuthBusy(true);setAuthMessage('Creando cuenta…');
+ const {data,error}=await cloud.auth.signUp({email,password});setAuthBusy(false);
+ if(error){setAuthMessage(error.message,true);return}
+ if(data.session)await activateSession(data.session);
+ else setAuthMessage('Cuenta creada. Revisa tu correo para confirmar el registro y luego inicia sesión.');
+}
+async function initCloudAuth(){
+ const gate=document.getElementById('authGate');
+ document.getElementById('authForm')?.addEventListener('submit',handleAuthSubmit);
+ document.getElementById('authSignupBtn')?.addEventListener('click',handleSignup);
+ const logout=document.getElementById('logoutBtn');logout?.addEventListener('click',async()=>{if(cloud)await cloud.auth.signOut()});
+ if(!cloud){gate?.classList.remove('hidden');setAuthMessage('No se encontró la configuración de Supabase. Revisa supabase-config.js.',true);return}
+ const {data,error}=await cloud.auth.getSession();
+ if(error){setAuthMessage(error.message,true);return}
+ if(data.session)await activateSession(data.session);else gate?.classList.remove('hidden');
+ cloud.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_IN'&&session)setTimeout(()=>activateSession(session),0);if(event==='SIGNED_OUT'){currentUser=null;cloudReady=false;db=emptyDatabase();renderAll();gate?.classList.remove('hidden')}});
+}
+
 const typeNames={leader:'Líder comunitario',official:'Representante',place:'Lugar',event:'Actividad',result:'Resultado agregado'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDate=d=>d?new Date(d+'T12:00:00').toLocaleDateString('es-CO',{day:'2-digit',month:'short',year:'numeric'}):'—';
@@ -141,9 +242,9 @@ function schema(type){const commonLoc=[field('municipality','Municipio'),field('
 }
 function openForm(type,id=null){currentType=type;currentId=id;const item=id?getCollection(type).find(x=>x.id===id):{};$('#modalTitle').textContent=(id?'Editar ':'Registrar ')+typeNames[type];$('#modalEyebrow').textContent=id?'ACTUALIZAR INFORMACIÓN':'NUEVO REGISTRO';$('#formFields').innerHTML=schema(type).map(f=>{let value=item?.[f.name]??f.default??'';let control=f.type==='select'?`<select name="${f.name}" ${f.required?'required':''}>${f.options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`:f.type==='textarea'?`<textarea name="${f.name}" placeholder="${esc(f.placeholder||'')}">${esc(value)}</textarea>`:`<input name="${f.name}" type="${f.type||'text'}" value="${esc(value)}" ${f.required?'required':''} ${f.type==='number'?'step="any"':''} placeholder="${esc(f.placeholder||'')}">`;return `<div class="field ${f.full?'full':''}"><label>${esc(f.label)}</label>${control}</div>`}).join('');$('#modalBackdrop').classList.add('open');iconRefresh()}
 function getCollection(type){return ({leader:db.leaders,official:db.officials,place:db.places,event:db.events,result:db.results})[type]}
-$('#recordForm').addEventListener('submit',e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target).entries());schema(currentType).forEach(f=>{if(f.type==='number')data[f.name]=data[f.name]===''?null:Number(data[f.name])});const col=getCollection(currentType);if(currentId){const i=col.findIndex(x=>x.id===currentId);col[i]={...col[i],...data}}else col.push({id:crypto.randomUUID(),...data});$('#modalBackdrop').classList.remove('open');save();toast('Registro guardado correctamente')});
+$('#recordForm').addEventListener('submit',async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target).entries());schema(currentType).forEach(f=>{if(f.type==='number')data[f.name]=data[f.name]===''?null:Number(data[f.name])});const col=getCollection(currentType);let item;if(currentId){const i=col.findIndex(x=>x.id===currentId);col[i]={...col[i],...data};item=col[i]}else{item={id:crypto.randomUUID(),...data};col.push(item)}$('#modalBackdrop').classList.remove('open');save();const result=await cloudUpsert(COLLECTION_TYPES[({leader:'leaders',official:'officials',place:'places',event:'events',result:'results'})[currentType]],item);if(result.error)toast('Guardado localmente, pero falló la nube: '+result.error.message);else toast('Registro guardado y sincronizado')});
 function closeModal(){$('#modalBackdrop').classList.remove('open')}
-function deleteRecord(type,id){if(!confirm('¿Seguro que deseas eliminar este registro?'))return;const c=getCollection(type);const i=c.findIndex(x=>x.id===id);if(i>=0)c.splice(i,1);save();toast('Registro eliminado')}
+async function deleteRecord(type,id){if(!confirm('¿Seguro que deseas eliminar este registro?'))return;const c=getCollection(type);const i=c.findIndex(x=>x.id===id);if(i>=0)c.splice(i,1);save();const cloudType=COLLECTION_TYPES[({leader:'leaders',official:'officials',place:'places',event:'events',result:'results'})[type]];const result=await cloudDelete(cloudType,id);if(result.error)toast('Eliminado localmente, pero falló la nube: '+result.error.message);else toast('Registro eliminado y sincronizado')}
 window.openForm=openForm;window.deleteRecord=deleteRecord;
 function showDetail(type,id){const x=getCollection(type).find(a=>a.id===id);if(!x)return;$('#detailTitle').textContent=x.name||x.candidate||'Detalle';$('#detailContent').innerHTML=Object.entries(x).filter(([k,v])=>k!=='id'&&v!==''&&v!==null&&v!==undefined).map(([k,v])=>`<div class="detail-line"><small>${esc(({name:'Nombre',role:'Cargo o función',municipality:'Municipio',department:'Departamento',neighborhood:'Barrio',status:'Estado',phone:'Teléfono',date:'Fecha',time:'Hora',place:'Lugar',organizer:'Responsable',votes:'Votos agregados',source:'Fuente',period:'Periodo',candidate:'Candidatura',lat:'Latitud aproximada',lng:'Longitud aproximada',notes:'Observaciones',description:'Descripción',party:'Organización',type:'Tipo',sector:'Sector'}[k]||k))}</small><strong>${esc(v)}</strong></div>`).join('')+`<div class="drawer-actions"><button class="secondary-btn" onclick="openForm('${type}','${id}')">Editar</button></div>`;$('#detailDrawer').classList.add('open');$('#drawerScrim').classList.add('open')}
 window.showDetail=showDetail;
@@ -172,4 +273,4 @@ if(localStorage.getItem('politikMapDark')==='true')document.body.classList.add('
 $('#menuToggle').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
 $('#todayLabel').textContent=new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('#globalSearch').focus()}if(e.key==='Escape'){closeModal();$('#detailDrawer').classList.remove('open');$('#drawerScrim').classList.remove('open')}});
-initMaps();setupTerritorySelector();renderAll();iconRefresh();
+initMaps();setupTerritorySelector();renderAll();iconRefresh();initCloudAuth();
